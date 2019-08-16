@@ -38,14 +38,14 @@ public class ReceiveFromArduino : MonoBehaviour
         try
         {
             //Arduinoからの値をコンマ区切りでSensor[]にぶち込む
-            string[] Sensor = message.Split(',');
+            string[] message = message.Split(',');
 
-            if (Sensor[0] == "quat")
+            if (message[0] == "HelloUnity")
             {
                 //Arduinoから来た加速度センサの値をそのままぶち込んでいる
-                for (int i = 0; i < 4; i++)
+                for (int i = 0; i < int.Parse(message[1]); i++)
                 {
-                    data[i] = float.Parse(Sensor[i + 1]);
+                    data[i] = float.Parse(message[i + 2]);
                 }
             }
         }

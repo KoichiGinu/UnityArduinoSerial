@@ -91,7 +91,13 @@ void Motor() {
 }
 
 void SendToUnity() {
-  //シリアル送信
+  //シリアル送信確認
+  Serial.print("HelloUnity");
+  Serial.print(",");
+  //送信するデータ数を送る
+  Serial.print(2);
+  Serial.print(",");
+  
   Serial.print(MotorSpeed);
   Serial.print(",");
   Serial.print(MotorMode);
