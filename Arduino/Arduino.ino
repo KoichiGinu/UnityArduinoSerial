@@ -1,150 +1,99 @@
-#include "I2Cdev.h"
-#include "MPU6050_6Axis_MotionApps20.h"
-#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
-#include "Wire.h"
-#endif
+// 設定定義
+#define AIA    5    // モータAのA側ピン
+#define AIB    6    // モータAのB側ピン
+#define BIA   10    // モータBのA側ピン
+#define BIB   11    // モータBのB側ピン
 
-MPU6050 mpu;
-//MPU6050 mpu(0x69); // <-- use for AD0 high
+float MotorSpeed = 0;
+int MotorMode = 0;
 
-#define OUTPUT_READABLE_QUATERNION
-
-#define INTERRUPT_PIN 2  // use pin 2 on Arduino Uno & most boards
-#define LED_PIN 13 // (Arduino is 13, Teensy is 11, Teensy++ is 6)
-bool blinkState = false;
-
-bool dmpReady = false;  // set true if DMP init was successful
-uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
-uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
-uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
-uint16_t fifoCount;     // count of all bytes currently in FIFO
-uint8_t fifoBuffer[64]; // FIFO storage buffer
-
-// orientation/motion vars
-Quaternion q;           // [w, x, y, z]         quaternion container
-
-// packet structure for InvenSense teapot demo
-uint8_t teapotPacket[14] = { '$', 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00, '\r', '\n' };
-
-volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
-void dmpDataReady() {
-  mpuInterrupt = true;
-}
+void ReceiveFromUnity();
+void Motor();
+void SendToUnity();
 
 void setup() {
-  // join I2C bus (I2Cdev library doesn't do this automatically)
-#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
-  // join I2C bus (I2Cdev library doesn't do this automatically)
-  Wire.begin();
-  // set I2C to a fast mode (400kpbs)
-  Wire.setClock(400000L);
-#elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
-  Fastwire::setup(400, true);
-#endif
-
-  Serial.begin(115200);
-  while (!Serial);
-  mpu.initialize();
-  pinMode(INTERRUPT_PIN, INPUT);
-
-  while (Serial.available() && Serial.read()); // empty buffer
-  while (!Serial.available());                 // wait for data
-  while (Serial.available() && Serial.read()); // empty buffer again
-
-  devStatus = mpu.dmpInitialize();
-
-  mpu.setXGyroOffset(220);
-  mpu.setYGyroOffset(76);
-  mpu.setZGyroOffset(-85);
-  mpu.setZAccelOffset(1788); // 1688 factory default for my test chip
-
-  // make sure it worked (returns 0 if so)
-  if (devStatus == 0) {
-    // turn on the DMP, now that it's ready
-    Serial.println(F("Enabling DMP..."));
-    mpu.setDMPEnabled(true);
-
-    // enable Arduino interrupt detection
-    Serial.print(F("Enabling interrupt detection (Arduino external interrupt "));
-    Serial.print(digitalPinToInterrupt(INTERRUPT_PIN));
-    Serial.println(F(")..."));
-    attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
-    mpuIntStatus = mpu.getIntStatus();
-
-    // set our DMP Ready flag so the main loop() function knows it's okay to use it
-    Serial.println(F("DMP ready! Waiting for first interrupt..."));
-    dmpReady = true;
-
-    // get expected DMP packet size for later comparison
-    packetSize = mpu.dmpGetFIFOPacketSize();
-  } else {
-    // ERROR!
-    // 1 = initial memory load failed
-    // 2 = DMP configuration updates failed
-    // (if it's going to break, usually the code will be 1)
-    Serial.print(F("DMP Initialization failed (code "));
-    Serial.print(devStatus);
-    Serial.println(F(")"));
-  }
-
-  // configure LED for output
-  pinMode(LED_PIN, OUTPUT);
+  // ポート設定
+  pinMode(AIA, OUTPUT);
+  pinMode(AIB, OUTPUT);
+  pinMode(BIA, OUTPUT);
+  pinMode(BIB, OUTPUT);
 }
 
 void loop() {
-  // if programming failed, don't try to do anything
-  if (!dmpReady) return;
+  //Unityから文字を受け取り，モータ信号処理を行い，Unityに文字を送信する流れ
+  ReceiveFromUnity();
+  Motor();
+  SendToUnity();
+}
 
-  // wait for MPU interrupt or extra packet(s) available
-  while (!mpuInterrupt && fifoCount < packetSize) {
-    if (mpuInterrupt && fifoCount < packetSize) {
-      // try to get out of the infinite loop
-      fifoCount = mpu.getFIFOCount();
+
+
+void ReceiveFromUnity()
+{
+  if ( Serial.available() ) {
+    char mode = Serial.read();
+
+    //Unityから送られてきた文字によって動作を変える
+    switch (mode) {
+      case '0' :
+        MotorSpeed = 255;
+        break;
+      case '1' :
+        MotorSpeed = 0;
+        break;
+
+      case 'A' :
+        MotorMode = 0;
+        break;
+      case 'B' :
+        MotorMode = 1;
+        break;
+      case 'C' :
+        MotorMode = 2;
+        break;
+      case 'D' :
+        MotorMode = 3;
+        break;
     }
+
   }
+}
 
-  // reset interrupt flag and get INT_STATUS byte
-  mpuInterrupt = false;
-  mpuIntStatus = mpu.getIntStatus();
-
-  // get current FIFO count
-  fifoCount = mpu.getFIFOCount();
-
-  // check for overflow (this should never happen unless our code is too inefficient)
-  if ((mpuIntStatus & _BV(MPU6050_INTERRUPT_FIFO_OFLOW_BIT)) || fifoCount >= 1024) {
-    // reset so we can continue cleanly
-    mpu.resetFIFO();
-    fifoCount = mpu.getFIFOCount();
-    //Serial.println(F("FIFO overflow!"));
-
-    // otherwise, check for DMP data ready interrupt (this should happen frequently)
-  } else if (mpuIntStatus & _BV(MPU6050_INTERRUPT_DMP_INT_BIT)) {
-    // wait for correct available data length, should be a VERY short wait
-    while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
-
-    // read a packet from FIFO
-    mpu.getFIFOBytes(fifoBuffer, packetSize);
-
-    // track FIFO count here in case there is > 1 packet available
-    // (this lets us immediately read more without waiting for an interrupt)
-    fifoCount -= packetSize;
-
-#ifdef OUTPUT_READABLE_QUATERNION
-    // display quaternion values in easy matrix form: w x y z
-    mpu.dmpGetQuaternion(&q, fifoBuffer);
-    Serial.print("quat,");
-    Serial.print(q.w);
-    Serial.print(",");
-    Serial.print(q.x);
-    Serial.print(",");
-    Serial.print(q.y);
-    Serial.print(",");
-    Serial.print(q.z);
-    Serial.println(",");
-#endif
-
-    // blink LED to indicate activity
-    blinkState = !blinkState;
-    digitalWrite(LED_PIN, blinkState);
+void Motor() {
+  if (MotorMode == 0) {
+    // 両側正回転
+    analogWrite(AIA, MotorSpeed);
+    analogWrite(AIB, 0);
+    analogWrite(BIA, MotorSpeed);
+    analogWrite(BIB, 0);
   }
+  else if (MotorMode == 1) {
+    // 両側逆回転
+    analogWrite(AIA, 0);
+    analogWrite(AIB, MotorSpeed);
+    analogWrite(BIA, 0);
+    analogWrite(BIB, MotorSpeed);
+  }
+  else if (MotorMode == 2) {
+    // 方側正回転
+    analogWrite(AIA, MotorSpeed);
+    analogWrite(AIB, 0);
+    analogWrite(BIA, 0);
+    analogWrite(BIB, 0);
+  }
+  else {
+    // 方側スロースピードの正回転
+    analogWrite(AIA, 0);
+    analogWrite(AIB, 0);
+    analogWrite(BIA, MotorSpeed);
+    analogWrite(BIB, 0);
+  }
+}
+
+void SendToUnity() {
+  //シリアル送信
+  Serial.print(MotorSpeed);
+  Serial.print(",");
+  Serial.print(MotorMode);
+  Serial.println("");
 }
